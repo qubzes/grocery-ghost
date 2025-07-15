@@ -24,12 +24,6 @@ PROXY_CONFIG = ProxyConfig(
     password=os.getenv("PROXY_PASSWORD", "proxy_password"),
 )
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
-]
-
 PROMPT = """Analyze this grocery store page and extract the following information:
 
     1. Product Information (if this is a product page):
@@ -71,11 +65,9 @@ async def scrape_task(session_id: str, base_url: str):
     products = []
     semaphore = asyncio.Semaphore(3)
 
-    user_agent = random.choice(USER_AGENTS)
     browser_config = BrowserConfig(
-        headless=True,
-        user_agent=user_agent,
-        # proxy_config=PROXY_CONFIG
+        headless=False,
+        proxy_config=PROXY_CONFIG
     )
     async with AsyncWebCrawler(config=browser_config, verbose=True) as crawler:
 

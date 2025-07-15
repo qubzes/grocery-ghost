@@ -66,7 +66,7 @@ async def scrape_task(session_id: str, base_url: str):
     semaphore = asyncio.Semaphore(3)
 
     browser_config = BrowserConfig(
-        headless=False,
+        headless=True,
         proxy_config=PROXY_CONFIG
     )
     async with AsyncWebCrawler(config=browser_config, verbose=True) as crawler:

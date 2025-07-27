@@ -14,8 +14,7 @@ from database import Base
 
 
 class SessionStatus(enum.Enum):
-    PENDING = "pending"
-    STARTING = "starting"
+    QUEUED = "queued"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -28,11 +27,11 @@ class ScrapeSession(Base):
         String, primary_key=True, default=lambda: str(uuid4())
     )
     url: Mapped[str] = mapped_column(String, nullable=False)
-    status: Mapped[SessionStatus] = mapped_column(
-        Enum(SessionStatus), nullable=False, default=SessionStatus.PENDING
-    )
     total_pages: Mapped[int] = mapped_column(Integer, default=0)
     scraped_pages: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[SessionStatus] = mapped_column(
+        Enum(SessionStatus), nullable=False, default=SessionStatus.QUEUED
+    )
     started_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

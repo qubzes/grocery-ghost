@@ -1,9 +1,9 @@
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 
 class ScrapeRequest(BaseModel):
-    url: str
+    url: HttpUrl
 
 
 class ProductSchema(BaseModel):
@@ -15,8 +15,9 @@ class ProductSchema(BaseModel):
         None, description="Original price if discounted"
     )
     unit_size: Optional[str] = Field(None, description="Unit size or quantity")
+    category: Optional[str] = Field(None, description="Product category")
+    url: str = Field(description="Product page URL")
     image_url: Optional[str] = Field(None, description="Main image URL")
-    department: Optional[str] = Field(None, description="Department or category")
     dietary_tags: list[str] = Field(
         default_factory=list, description="Dietary tags like vegan, gluten-free"
     )

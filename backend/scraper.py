@@ -5,7 +5,7 @@ import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse
 
 import openai
 import requests
@@ -29,27 +29,22 @@ def create_request_session():
     return session
 
 
-def normalize_url(url, request):
+def normalize_url(url):
+    """Clean and normalize URL by following redirects and getting final base URL and netloc"""
+    session = create_request_session()
     try:
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
+        response = session.get(url, allow_redirects=True, timeout=10)
+        response.raise_for_status()
 
-        response = request.head(url, allow_redirects=True, timeout=10)
-        final_url = response.url
-
+        final_url = response.headers.get("x-unblocker-redirected-to", response.url)
         parsed = urlparse(final_url)
-        base_url = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
-        netloc = parsed.netloc.lower()
-
-        return base_url, netloc
-    except Exception:
-        try:
-            parsed = urlparse(url if url.startswith("http") else "https://" + url)
-            base_url = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
-            netloc = parsed.netloc.lower()
-            return base_url, netloc
-        except Exception:
-            raise ValueError(f"Invalid URL: {url}")
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        return base_url, parsed.netloc
+    except Exception as e:
+        print(f"Error normalizing URL {url}: {str(e)}")
+        raise
+    finally:
+        session.close()
 
 
 def find_initial_sitemaps(base_url, session):
@@ -175,8 +170,10 @@ def extract_page_data(html, url):
             ],
             response_format={"type": "json_object"},
         )
-        json_data = json.loads(completion.choices[0].message.content)
-        return PageAnalysis(**json_data)
+        content = completion.choices[0].message.content
+        if content:
+            json_data = json.loads(content)
+            return PageAnalysis(**json_data)
     except Exception as e:
         print(f"Error extracting data from {url}: {e}")
         return None
@@ -211,7 +208,7 @@ def scrape_page(url, session_id, db, request):
         return 0
 
 
-def scrape_store(session_id: str):
+def scrape_store(session_id: str, base_url: str, netloc: str):
     db = SessionLocal()
     scrape_session = None
     try:
@@ -222,10 +219,8 @@ def scrape_store(session_id: str):
             raise ValueError("Session not found")
 
         request = create_request_session()
-        base_url, netloc = normalize_url(scrape_session.url, request)
 
-        scrape_session.status = SessionStatus.STARTING
-        scrape_session.url = base_url
+        scrape_session.status = SessionStatus.IN_PROGRESS
         db.commit()
 
         initial_sitemaps = find_initial_sitemaps(base_url, request)
@@ -234,7 +229,7 @@ def scrape_store(session_id: str):
 
         all_urls = extract_urls_from_sitemaps(initial_sitemaps, netloc, request)
 
-        scrape_session.total_urls = len(all_urls)
+        scrape_session.total_pages = len(all_urls)
         db.commit()
 
         print(f"Found {len(all_urls)} relevant URLs. Starting page scraping...")
@@ -252,11 +247,11 @@ def scrape_store(session_id: str):
                     for url in batch
                 ]
                 for future in as_completed(futures):
-                    scraped = future.result()
-                    scrape_session.scraped_count += 1 if scraped else 1
+                    future.result()
+                    scrape_session.scraped_pages += 1
             db.commit()
             print(
-                f"Progress: {scrape_session.scraped_count}/{scrape_session.total_urls}"
+                f"Progress: {scrape_session.scraped_pages}/{scrape_session.total_pages}"
             )
 
         scrape_session.completed_at = datetime.now(timezone.utc)

@@ -42,7 +42,7 @@ def normalize_url(url):
     """Clean and normalize URL by following redirects and getting final base URL and netloc"""
     session = create_request_session()
     try:
-        response = session.get(url, allow_redirects=True, timeout=10)
+        response = session.get(url, timeout=10)
         response.raise_for_status()
 
         final_url = response.headers.get("x-unblocker-redirected-to", response.url)

@@ -210,8 +210,8 @@ async def scrape_single_page(url, session_id):
             )
             db.add(product)
             db.commit()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Error scraping {url}: {e}")
     finally:
         request.close()
         db.close()
@@ -229,13 +229,16 @@ def process_all_pages(urls, session_id):
     if not scrape_session:
         db.close()
         raise ValueError("Session not found")
-    
-    def sync_scrape_single_page(url, session_id):
-            asyncio.run(scrape_single_page(url, session_id))
 
-    with ThreadPoolExecutor(max_workers=50) as executor:  # Increased for better concurrency, but limited to prevent overload
+    def sync_scrape_single_page(url, session_id):
+        asyncio.run(scrape_single_page(url, session_id))
+
+    with ThreadPoolExecutor(
+        max_workers=50
+    ) as executor:  # Increased for better concurrency, but limited to prevent overload
         futures = {
-            executor.submit(sync_scrape_single_page, url, session_id): url for url in urls
+            executor.submit(sync_scrape_single_page, url, session_id): url
+            for url in urls
         }
 
         for _ in as_completed(futures):

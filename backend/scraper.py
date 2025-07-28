@@ -1,15 +1,15 @@
+import asyncio
 import gzip
-import json
-import os
 import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import urljoin, urlparse
 
-import openai
 import requests
 import urllib3
+from bs4 import BeautifulSoup
+from pydantic_ai import Agent
 
 from database import SessionLocal
 from models import Product, ScrapeSession, SessionStatus
@@ -18,8 +18,17 @@ from schemas import PageAnalysis
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 PROXY = "http://brd-customer-hl_3bfca4c1-zone-grocery_ghost:o7hhz0cwt588@brd.superproxy.io:33335"
-
 RELEVANT_PATHS = ["/shop/", "/product/", "/groceries/"]
+MODEL_NAME = "google-gla:gemini-2.5-flash-lite-preview-06-17"
+SYSTEM_PROMPT = (
+    "You are an AI that analyzes grocery store web pages. Given the text content of a page, "
+    "determine if it is a product detail page. If yes, extract the product information accurately. "
+    "If not, set is_product to false and product to null."
+)
+gemini_agent = Agent(
+    MODEL_NAME,
+    system_prompt=SYSTEM_PROMPT,
+)
 
 
 def create_request_session():
@@ -152,60 +161,91 @@ def extract_urls_from_sitemaps(initial_sitemaps, netloc, session):
     return all_urls
 
 
-def extract_page_data(html, url):
-    client = openai.OpenAI(
-        base_url="https://api.x.ai/v1", api_key=os.getenv("XAI_API_KEY")
-    )
-    schema = PageAnalysis.model_json_schema()
-    prompt = f"Analyze this HTML from {url} and extract structured data. Output only JSON matching this schema: {json.dumps(schema)}\nHTML: {html[:4000]}"  # Truncate HTML if too long
+async def extract_page_data(html, url):
+    """Extract page data using Pydantic AI Agent with Gemini"""
     try:
-        completion = client.chat.completions.create(
-            model="grok-4",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that extracts data from HTML to JSON format.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-        )
-        content = completion.choices[0].message.content
-        if content:
-            json_data = json.loads(content)
-            return PageAnalysis(**json_data)
+        result = await gemini_agent.run(html, output_type=PageAnalysis)
+        return result.output
+
     except Exception as e:
         print(f"Error extracting data from {url}: {e}")
         return None
 
 
-def scrape_page(url, session_id, db, request):
+async def scrape_single_page(url, session_id):
+    """Scrape a single page and return product data if found"""
+    db = SessionLocal()
+    request = create_request_session()
+
     try:
         response = request.get(url)
         response.raise_for_status()
         html = response.text
-        analysis = extract_page_data(html, url)
+        soup = BeautifulSoup(html, "html.parser")
+        clean_html = soup.get_text(separator="\n", strip=True)
+        print(f"Scraping {url}...")
+        print(f"Cleaned HTML length: {len(clean_html)} characters")
+        print(f"Cleaned HTML preview: {clean_html[:200]}...")
+        analysis = await extract_page_data(clean_html, url)
+
+        print(
+            f"Analyzing {url} - is_product: {analysis.is_product if analysis else 'N/A'}"
+        )
+        print(
+            f"Product found: {analysis.product.name if analysis and analysis.is_product and analysis.product else 'No product'}"
+        )
         if analysis and analysis.is_product and analysis.product:
-            product_data = analysis.product
             product = Product(
                 session_id=session_id,
                 url=url,
-                name=product_data.name,
-                current_price=product_data.current_price,
-                original_price=product_data.original_price,
-                unit_size=product_data.unit_size,
-                image_url=product_data.image_url,
-                department=product_data.department,
-                dietary_tags=",".join(
-                    product_data.dietary_tags
-                ),  # Store as comma-separated string
+                name=analysis.product.name,
+                current_price=analysis.product.current_price,
+                original_price=analysis.product.original_price,
+                unit_size=analysis.product.unit_size,
+                image_url=analysis.product.image_url,
+                category=analysis.product.category,
+                dietary_tags=",".join(analysis.product.dietary_tags)
+                if analysis.product.dietary_tags
+                else None,
             )
             db.add(product)
             db.commit()
-            return 1
-        return 0
     except Exception:
-        return 0
+        pass
+    finally:
+        request.close()
+        db.close()
+
+
+def process_all_pages(urls, session_id):
+    """Process all URLs with unlimited concurrent workers"""
+    total_pages = len(urls)
+
+    db = SessionLocal()
+    scrape_session = (
+        db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
+    )
+
+    if not scrape_session:
+        db.close()
+        raise ValueError("Session not found")
+    
+    def sync_scrape_single_page(url, session_id):
+            asyncio.run(scrape_single_page(url, session_id))
+
+    with ThreadPoolExecutor(max_workers=50) as executor:  # Increased for better concurrency, but limited to prevent overload
+        futures = {
+            executor.submit(sync_scrape_single_page, url, session_id): url for url in urls
+        }
+
+        for _ in as_completed(futures):
+            scrape_session.scraped_pages += 1
+            if scrape_session.scraped_pages % 50 == 0:  # Commit every 50 pages
+                db.commit()
+                print(f"Progress: {scrape_session.scraped_pages}/{total_pages}")
+
+    db.commit()
+    db.close()
 
 
 def scrape_store(session_id: str, base_url: str, netloc: str):
@@ -229,30 +269,16 @@ def scrape_store(session_id: str, base_url: str, netloc: str):
 
         all_urls = extract_urls_from_sitemaps(initial_sitemaps, netloc, request)
 
+        if not all_urls:
+            scrape_session.status = SessionStatus.FAILED
+            scrape_session.error = "Couldn't find any URLs from sitemaps"
+            db.commit()
+            return
+
         scrape_session.total_pages = len(all_urls)
         db.commit()
 
-        print(f"Found {len(all_urls)} relevant URLs. Starting page scraping...")
-
-        # Scrape pages concurrently, update progress
-        all_urls_list = list(all_urls)
-        batch_size = 100
-        for i in range(0, len(all_urls_list), batch_size):
-            batch = all_urls_list[i : i + batch_size]
-            with ThreadPoolExecutor(
-                max_workers=5
-            ) as executor:  # Limit concurrency for AI calls
-                futures = [
-                    executor.submit(scrape_page, url, session_id, db, request)
-                    for url in batch
-                ]
-                for future in as_completed(futures):
-                    future.result()
-                    scrape_session.scraped_pages += 1
-            db.commit()
-            print(
-                f"Progress: {scrape_session.scraped_pages}/{scrape_session.total_pages}"
-            )
+        process_all_pages(list(all_urls), session_id)
 
         scrape_session.completed_at = datetime.now(timezone.utc)
         scrape_session.status = SessionStatus.COMPLETED
@@ -263,6 +289,5 @@ def scrape_store(session_id: str, base_url: str, netloc: str):
             scrape_session.status = SessionStatus.FAILED
             scrape_session.error = str(e)
             db.commit()
-        raise
     finally:
         db.close()

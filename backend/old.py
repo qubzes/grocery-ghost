@@ -123,7 +123,7 @@ async def fetch_page_content(url: str) -> str | None:
         # Run in thread pool to avoid blocking async loop
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(None, opener.open, url)
-        content = response.read().decode()
+        content = response.read().decode()zz
         logger.info(f"✓ Fetched content from {url} ({len(content)} chars)")
         return content
     except Exception as e:

@@ -51,5 +51,5 @@ class Product(Base):
     original_price: Mapped[str | None] = mapped_column(String)
     unit_size: Mapped[str | None] = mapped_column(String)
     image_url: Mapped[str | None] = mapped_column(String)
-    department: Mapped[str | None] = mapped_column(String)
+    category: Mapped[str | None] = mapped_column(String)
     dietary_tags: Mapped[str | None] = mapped_column(String)

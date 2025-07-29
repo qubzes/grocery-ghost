@@ -37,6 +37,7 @@ async def get_sessions(db: Session = Depends(get_db)):
         "sessions": [
             {
                 "id": s.id,
+                "name": s.name,
                 "url": s.url,
                 "status": s.status.value,
                 "total_pages": s.total_pages,
@@ -59,6 +60,7 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
 
     response = {
         "session_id": session.id,
+        "name": session.name,
         "url": session.url,
         "status": session.status.value,
         "total_pages": session.total_pages,

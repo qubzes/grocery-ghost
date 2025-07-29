@@ -16,7 +16,7 @@ async def scrape(
     db: Session = Depends(get_db),
 ):
     try:
-        base_url, netloc, name = validate_url(str(request.url))
+        base_url, netloc, name = await validate_url(str(request.url))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -17,7 +17,8 @@ from schemas import PageAnalysis
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-PROXY = "http://brd-customer-hl_3bfca4c1-zone-grocery_ghost:o7hhz0cwt588@brd.superproxy.io:33335"
+PROXY = "http://brd-customer-hl_45763da0-zone-grocery_ghost:hez83y11cjt6@brd.superproxy.io:33335"
+
 RELEVANT_PATHS = ["/shop/", "/product/", "/groceries/"]
 MODEL_NAME = "google-gla:gemini-2.5-flash-lite-preview-06-17"
 SYSTEM_PROMPT = (

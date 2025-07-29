@@ -27,6 +27,7 @@ class ScrapeSession(Base):
         String, primary_key=True, default=lambda: str(uuid4())
     )
     url: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str | None] = mapped_column(String)
     total_pages: Mapped[int] = mapped_column(Integer, default=0)
     scraped_pages: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[SessionStatus] = mapped_column(
@@ -41,7 +42,10 @@ class ScrapeSession(Base):
 
 class Product(Base):
     __tablename__ = "products"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid4())
+    )
     session_id: Mapped[str] = mapped_column(
         String, ForeignKey("sessions.id"), nullable=False
     )

@@ -17,7 +17,7 @@ from schemas import PageAnalysis
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-PROXY = "http://brd-customer-hl_45763da0-zone-grocery_ghost:hez83y11cjt6@brd.superproxy.io:33335"
+PROXY = "http://brd-customer-hl_3bfca4c1-zone-grocery_ghost:o7hhz0cwt588@brd.superproxy.io:33335"
 RELEVANT_PATHS = ["/shop/", "/product/", "/groceries/"]
 MODEL_NAME = "google-gla:gemini-2.5-flash-lite-preview-06-17"
 SYSTEM_PROMPT = (
@@ -38,8 +38,8 @@ def create_request_session():
     return session
 
 
-def normalize_url(url):
-    """Clean and normalize URL by following redirects and getting final base URL and netloc"""
+async def validate_url(url):
+    """Validate URL and extract company name using AI"""
     session = create_request_session()
     try:
         response = session.get(url, timeout=10)
@@ -48,9 +48,34 @@ def normalize_url(url):
         final_url = response.headers.get("x-unblocker-redirected-to", response.url)
         parsed = urlparse(final_url)
         base_url = f"{parsed.scheme}://{parsed.netloc}"
-        return base_url, parsed.netloc
+
+        # Get page content for AI analysis
+        html = response.text
+        soup = BeautifulSoup(html, "html.parser")
+        clean_text = soup.get_text(separator="\n", strip=True)[
+            :2000
+        ]  # Limit text for efficiency
+
+        # Use AI to extract company name
+        company_prompt = (
+            f"Based on this URL ({final_url}) and website content, "
+            f"what is the official name of this grocery store company? "
+            f"Return only the official company name, nothing else."
+        )
+
+        try:
+            result = await gemini_agent.run(
+                f"{company_prompt}\n\nWebsite content:\n{clean_text}"
+            )
+            company_name = result.output.strip()
+        except Exception as e:
+            print(f"Error extracting company name: {e}")
+            company_name = parsed.netloc  # Fallback to domain name
+
+        return base_url, parsed.netloc, company_name
+
     except Exception as e:
-        print(f"Error normalizing URL {url}: {str(e)}")
+        print(f"Error validating URL {url}: {str(e)}")
         raise
     finally:
         session.close()
@@ -243,6 +268,15 @@ def process_all_pages(urls, session_id):
 
         for _ in as_completed(futures):
             scrape_session.scraped_pages += 1
+
+            # Check if we've found 100 products and stop
+            product_count = (
+                db.query(Product).filter(Product.session_id == session_id).count()
+            )
+            if product_count >= 100:
+                print("Reached 100 products limit. Stopping scraper.")
+                break
+
             if scrape_session.scraped_pages % 50 == 0:  # Commit every 50 pages
                 db.commit()
                 print(f"Progress: {scrape_session.scraped_pages}/{total_pages}")

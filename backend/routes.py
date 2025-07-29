@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Product, ScrapeSession
 from schemas import ScrapeRequest
-from scraper import normalize_url, scrape_store
+from scraper import validate_url, scrape_store
 
 router = APIRouter()
 
@@ -16,11 +16,11 @@ async def scrape(
     db: Session = Depends(get_db),
 ):
     try:
-        base_url, netloc = normalize_url(str(request.url))
+        base_url, netloc, name = validate_url(str(request.url))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    new_session = ScrapeSession(url=base_url)
+    new_session = ScrapeSession(url=base_url, name=name)
     db.add(new_session)
     db.commit()
 

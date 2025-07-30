@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://127.0.0.1:8000/api";
+const API_BASE_URL = "http://49.13.205.117/:5000/api";
 
 export interface ScrapeRequest {
   url: string;
@@ -25,7 +25,7 @@ export interface Session {
   id: string;
   name: string;
   url: string;
-  status: 'queued' | 'in_progress' | 'completed' | 'failed' | 'canceled';
+  status: "queued" | "in_progress" | "completed" | "failed" | "canceled";
   total_pages: number;
   scraped_pages: number;
   started_at: string;
@@ -45,19 +45,24 @@ export interface SessionsResponse {
 }
 
 class ApiService {
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async request<T>(
+    endpoint: string,
+    options?: RequestInit
+  ): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
-    
+
     const response = await fetch(url, {
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...options?.headers,
       },
       ...options,
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      const errorData = await response
+        .json()
+        .catch(() => ({ detail: "Unknown error" }));
       throw new Error(errorData.detail || `HTTP ${response.status}`);
     }
 
@@ -65,14 +70,14 @@ class ApiService {
   }
 
   async startScraping(request: ScrapeRequest): Promise<ScrapeResponse> {
-    return this.request<ScrapeResponse>('/scrape', {
-      method: 'POST',
+    return this.request<ScrapeResponse>("/scrape", {
+      method: "POST",
       body: JSON.stringify(request),
     });
   }
 
   async getSessions(): Promise<SessionsResponse> {
-    return this.request<SessionsResponse>('/sessions');
+    return this.request<SessionsResponse>("/sessions");
   }
 
   async getSession(sessionId: string): Promise<SessionDetail> {
@@ -81,26 +86,26 @@ class ApiService {
 
   async deleteSession(sessionId: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/session/${sessionId}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
   }
 
   async exportSession(sessionId: string): Promise<Blob> {
     const url = `${API_BASE_URL}/session/${sessionId}/export`;
     const response = await fetch(url);
-    
+
     if (!response.ok) {
       throw new Error(`Export failed: ${response.statusText}`);
     }
-    
+
     return response.blob();
   }
 
   // Helper method to download exported data
   downloadExport(blob: Blob, filename: string) {
     const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
+    const a = document.createElement("a");
+    a.style.display = "none";
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);

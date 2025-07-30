@@ -205,7 +205,7 @@ export const ProductsTable = () => {
                     Size
                   </TableHead>
                   <TableHead className="font-bold text-foreground text-center py-4 px-4 hidden lg:table-cell">
-                    Image
+                    Product Page
                   </TableHead>
                   <TableHead className="font-bold text-foreground text-center py-4 px-4">
                     Department
@@ -250,14 +250,14 @@ export const ProductsTable = () => {
                     </TableCell>
                     
                     <TableCell className="text-center py-4 px-4 hidden lg:table-cell">
-                      {product.image_url ? (
+                      {product.url ? (
                         <a 
-                          href={product.image_url} 
+                          href={product.url} 
                           target="_blank" 
                           rel="noopener noreferrer"
                           className="text-blue-400 hover:text-blue-300 inline-flex items-center font-medium transition-colors duration-200 hover:underline"
                         >
-                          View
+                          View Product
                           <ExternalLink className="h-3 w-3 ml-1" />
                         </a>
                       ) : (

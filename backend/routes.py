@@ -6,7 +6,7 @@ import io
 from concurrent.futures import ThreadPoolExecutor
 
 from database import get_db
-from models import Product, ScrapeSession
+from models import Product, ScrapeSession, SessionStatus
 from schemas import ScrapeRequest
 from scraper import validate_url, scrape_store
 
@@ -14,6 +14,15 @@ router = APIRouter()
 
 # Thread pool for database operations
 executor = ThreadPoolExecutor(max_workers=4)
+
+# Status mapping for SQLite enum values to frontend expected values
+STATUS_MAPPING = {
+    "QUEUED": "queued",
+    "IN_PROGRESS": "in_progress", 
+    "COMPLETED": "completed",
+    "FAILED": "failed",
+    "CANCELED": "canceled"
+}
 
 
 @router.post("/scrape")
@@ -72,7 +81,7 @@ async def get_sessions(db: Session = Depends(get_db)):
                 "id": row.id,
                 "name": row.name,
                 "url": row.url,
-                "status": row.status,
+                "status": STATUS_MAPPING.get(row.status, row.status.lower()),
                 "total_pages": row.total_pages,
                 "scraped_pages": row.scraped_pages,
                 "started_at": row.started_at,
@@ -153,7 +162,7 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
             "session_id": session_row.id,
             "name": session_row.name,
             "url": session_row.url,
-            "status": session_row.status,
+            "status": STATUS_MAPPING.get(session_row.status, session_row.status.lower()),
             "total_pages": session_row.total_pages,
             "scraped_pages": session_row.scraped_pages,
             "progress": round((session_row.scraped_pages / session_row.total_pages * 100), 2)

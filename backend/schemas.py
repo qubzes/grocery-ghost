@@ -40,5 +40,8 @@ class ProductSchema(BaseModel):
 class PageAnalysis(BaseModel):
     is_product: bool = Field(description="Is this a product page?")
     product: Optional[ProductSchema] = Field(
-        None, description="Product info if it is a product page"
+        None, description="Accurate Product info if it is a product page"
+    )
+    description: Optional[str] = Field(
+        None, description="Very brief description of the page content"
     )

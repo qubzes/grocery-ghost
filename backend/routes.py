@@ -1,5 +1,7 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
+import csv
+import io
 
 from database import get_db
 from models import Product, ScrapeSession
@@ -33,21 +35,23 @@ async def scrape(
 async def get_sessions(db: Session = Depends(get_db)):
     sessions = db.query(ScrapeSession).order_by(ScrapeSession.started_at.desc()).all()
 
-    return {
-        "sessions": [
-            {
-                "id": s.id,
-                "name": s.name,
-                "url": s.url,
-                "status": s.status.value,
-                "total_pages": s.total_pages,
-                "scraped_pages": s.scraped_pages,
-                "started_at": s.started_at,
-                "completed_at": s.completed_at,
-            }
-            for s in sessions
-        ]
-    }
+    # Get product count for each session
+    sessions_with_counts = []
+    for s in sessions:
+        product_count = db.query(Product).filter(Product.session_id == s.id).count()
+        sessions_with_counts.append({
+            "id": s.id,
+            "name": s.name,
+            "url": s.url,
+            "status": s.status.value,
+            "total_pages": s.total_pages,
+            "scraped_pages": s.scraped_pages,
+            "started_at": s.started_at,
+            "completed_at": s.completed_at,
+            "product_count": product_count,
+        })
+
+    return {"sessions": sessions_with_counts}
 
 
 @router.get("/session/{session_id}")
@@ -89,3 +93,59 @@ async def get_session(session_id: str, db: Session = Depends(get_db)):
     }
 
     return response
+
+
+@router.delete("/session/{session_id}")
+async def delete_session(session_id: str, db: Session = Depends(get_db)):
+    session = db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Delete associated products first
+    db.query(Product).filter(Product.session_id == session_id).delete()
+    # Delete the session
+    db.delete(session)
+    db.commit()
+
+    return {"message": "Session deleted successfully"}
+
+
+@router.get("/session/{session_id}/export")
+async def export_session_products(session_id: str, db: Session = Depends(get_db)):
+    session = db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    products = db.query(Product).filter(Product.session_id == session_id).all()
+    
+    # Create CSV content
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write header
+    writer.writerow([
+        "Name", "Current Price", "Original Price", "Unit Size", 
+        "Category", "URL", "Image URL", "Dietary Tags"
+    ])
+    
+    # Write product data
+    for product in products:
+        writer.writerow([
+            product.name,
+            product.current_price,
+            product.original_price,
+            product.unit_size,
+            product.category,
+            product.url,
+            product.image_url,
+            product.dietary_tags
+        ])
+    
+    content = output.getvalue()
+    output.close()
+    
+    return Response(
+        content=content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={session.name}_products.csv"}
+    )

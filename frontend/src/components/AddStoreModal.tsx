@@ -1,10 +1,16 @@
-
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Store, Rocket } from "lucide-react";
+import { Store, Rocket, Loader2 } from "lucide-react";
+import { useStartScraping } from "@/hooks/useApi";
+import { toast } from "sonner";
 
 interface AddStoreModalProps {
   isOpen: boolean;
@@ -12,23 +18,38 @@ interface AddStoreModalProps {
 }
 
 export const AddStoreModal = ({ isOpen, onClose }: AddStoreModalProps) => {
-  const [storeName, setStoreName] = useState("");
   const [storeUrl, setStoreUrl] = useState("");
-  const [storeTag, setStoreTag] = useState("");
+  const startScrapingMutation = useStartScraping();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle form submission
-    console.log('Adding store:', { storeName, storeUrl, storeTag });
-    onClose();
-    // Reset form
-    setStoreName("");
-    setStoreUrl("");
-    setStoreTag("");
+
+    if (!storeUrl.trim()) {
+      toast.error("Please enter a valid store URL");
+      return;
+    }
+
+    try {
+      await startScrapingMutation.mutateAsync({ url: storeUrl.trim() });
+      toast.success("Store added and scraping started!");
+
+      // Reset form and close modal
+      setStoreUrl("");
+      onClose();
+    } catch (error) {
+      // Error is already handled in the mutation
+    }
+  };
+
+  const handleClose = () => {
+    if (!startScrapingMutation.isPending) {
+      setStoreUrl("");
+      onClose();
+    }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md rounded-xl shadow-2xl">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold text-gray-900 flex items-center">
@@ -36,25 +57,13 @@ export const AddStoreModal = ({ isOpen, onClose }: AddStoreModalProps) => {
             Add New Store
           </DialogTitle>
         </DialogHeader>
-        
+
         <form onSubmit={handleSubmit} className="space-y-6 mt-4">
           <div className="space-y-2">
-            <Label htmlFor="storeName" className="text-sm font-semibold text-gray-700">
-              Store Name
-            </Label>
-            <Input
-              id="storeName"
-              type="text"
-              value={storeName}
-              onChange={(e) => setStoreName(e.target.value)}
-              placeholder="e.g., Fresh Grocer - Cedar Grove"
-              className="h-12 text-base border-2 focus:border-emerald-500"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="storeUrl" className="text-sm font-semibold text-gray-700">
+            <Label
+              htmlFor="storeUrl"
+              className="text-sm font-semibold text-gray-700"
+            >
               Store URL
             </Label>
             <Input
@@ -62,39 +71,41 @@ export const AddStoreModal = ({ isOpen, onClose }: AddStoreModalProps) => {
               type="url"
               value={storeUrl}
               onChange={(e) => setStoreUrl(e.target.value)}
-              placeholder="https://www.examplegrocerystore.com/store/xyz"
+              placeholder="https://www.examplegrocerystore.com"
               className="h-12 text-base border-2 focus:border-emerald-500"
               required
+              disabled={startScrapingMutation.isPending}
             />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="storeTag" className="text-sm font-semibold text-gray-700">
-              Optional Tag or Nickname
-            </Label>
-            <Input
-              id="storeTag"
-              type="text"
-              value={storeTag}
-              onChange={(e) => setStoreTag(e.target.value)}
-              placeholder="e.g., Downtown Location"
-              className="h-12 text-base border-2 focus:border-emerald-500"
-            />
+            <p className="text-xs text-gray-500">
+              Enter the main URL of the grocery store. The system will
+              automatically extract the store name and start scraping.
+            </p>
           </div>
 
           <div className="flex gap-3 pt-4">
             <Button
               type="submit"
               className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              disabled={!storeUrl.trim() || startScrapingMutation.isPending}
             >
-              <Rocket className="h-4 w-4 mr-2" />
-              Add & Start Scraping
+              {startScrapingMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                <>
+                  <Rocket className="h-4 w-4 mr-2" />
+                  Add & Start Scraping
+                </>
+              )}
             </Button>
             <Button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               variant="outline"
               className="px-8 h-12 border-gray-300 text-gray-700"
+              disabled={startScrapingMutation.isPending}
             >
               Cancel
             </Button>

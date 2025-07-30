@@ -12,7 +12,8 @@ import {
   XCircle, 
   MoreVertical,
   Zap,
-  Ghost
+  Ghost,
+  Loader2
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -20,42 +21,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-interface StoreData {
-  id: string;
-  name: string;
-  url: string;
-  status: 'completed' | 'running' | 'failed';
-  lastScrape: string;
-  productCount: number;
-}
-
-const mockStores: StoreData[] = [
-  {
-    id: '1',
-    name: 'Fresh Grocer - Cedar Grove',
-    url: 'https://freshgrocer.com/cedar-grove',
-    status: 'completed',
-    lastScrape: '2 hours ago',
-    productCount: 1247
-  },
-  {
-    id: '2',
-    name: 'Whole Foods Market',
-    url: 'https://wholefoodsmarket.com/store-123',
-    status: 'running',
-    lastScrape: '5 minutes ago',
-    productCount: 892
-  },
-  {
-    id: '3',
-    name: 'SuperMart Downtown',
-    url: 'https://supermart.com/downtown',
-    status: 'failed',
-    lastScrape: '1 day ago',
-    productCount: 0
-  }
-];
+import { useSessions, useDeleteSession, useStartScraping } from "@/hooks/useApi";
+import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 
 const getStatusConfig = (status: string) => {
   switch (status) {
@@ -65,17 +33,29 @@ const getStatusConfig = (status: string) => {
         text: 'Completed',
         className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
       };
-    case 'running':
+    case 'in_progress':
       return {
         icon: Clock,
-        text: 'Running',
+        text: 'In Progress',
         className: 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse'
+      };
+    case 'queued':
+      return {
+        icon: Clock,
+        text: 'Queued',
+        className: 'bg-blue-500/10 text-blue-400 border-blue-500/20'
       };
     case 'failed':
       return {
         icon: XCircle,
         text: 'Failed',
         className: 'bg-red-500/10 text-red-400 border-red-500/20'
+      };
+    case 'canceled':
+      return {
+        icon: XCircle,
+        text: 'Canceled',
+        className: 'bg-gray-500/10 text-gray-400 border-gray-500/20'
       };
     default:
       return {
@@ -87,8 +67,39 @@ const getStatusConfig = (status: string) => {
 };
 
 export const StoreSidebar = () => {
-  const [stores] = useState(mockStores);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const { data: sessionsData, isLoading, error } = useSessions();
+  const deleteSessionMutation = useDeleteSession();
+  const startScrapingMutation = useStartScraping();
+
+  const sessions = sessionsData?.sessions || [];
+
+  const handleDeleteSession = async (sessionId: string, sessionName: string) => {
+    if (window.confirm(`Are you sure you want to delete "${sessionName}"? This action cannot be undone.`)) {
+      try {
+        await deleteSessionMutation.mutateAsync(sessionId);
+      } catch (error) {
+        // Error is handled in the mutation
+      }
+    }
+  };
+
+  const handleReScrapeStore = async (url: string) => {
+    try {
+      await startScrapingMutation.mutateAsync({ url });
+      toast.success("Re-scraping started!");
+    } catch (error) {
+      // Error is handled in the mutation
+    }
+  };
+
+  const formatLastScrape = (dateString: string) => {
+    try {
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+    } catch {
+      return 'Unknown';
+    }
+  };
 
   return (
     <>
@@ -113,22 +124,46 @@ export const StoreSidebar = () => {
 
         {/* Stores List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {stores.map((store) => {
-            const statusConfig = getStatusConfig(store.status);
+          {isLoading && (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-sidebar-primary" />
+              <span className="ml-2 text-sidebar-foreground">Loading sessions...</span>
+            </div>
+          )}
+
+          {error && (
+            <div className="text-center py-8 text-red-400">
+              <p>Failed to load sessions</p>
+              <p className="text-sm text-sidebar-foreground mt-1">
+                Make sure the backend is running
+              </p>
+            </div>
+          )}
+
+          {!isLoading && !error && sessions.length === 0 && (
+            <div className="text-center py-8 text-sidebar-foreground">
+              <Store className="h-12 w-12 mx-auto mb-4 text-sidebar-primary/50" />
+              <p className="text-sm">No stores added yet</p>
+              <p className="text-xs mt-1">Click "Add New Store" to get started</p>
+            </div>
+          )}
+
+          {sessions.map((session) => {
+            const statusConfig = getStatusConfig(session.status);
             const StatusIcon = statusConfig.icon;
             
             return (
               <Card 
-                key={store.id} 
+                key={session.id} 
                 className="p-4 bg-sidebar-accent border-sidebar-border hover:bg-sidebar-accent/80 transition-all duration-300 hover:shadow-lg rounded-xl group"
               >
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-white text-sm lg:text-base truncate group-hover:text-sidebar-primary transition-colors duration-200">
-                      {store.name}
+                      {session.name}
                     </h3>
                     <p className="text-xs text-sidebar-foreground truncate mt-1">
-                      {store.url}
+                      {session.url}
                     </p>
                   </div>
                   
@@ -138,23 +173,32 @@ export const StoreSidebar = () => {
                         variant="ghost" 
                         size="sm" 
                         className="h-8 w-8 p-0 text-sidebar-foreground hover:text-white hover:bg-sidebar-accent/50 rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200"
+                        disabled={deleteSessionMutation.isPending}
                       >
-                        <MoreVertical className="h-4 w-4" />
+                        {deleteSessionMutation.isPending ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <MoreVertical className="h-4 w-4" />
+                        )}
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent 
                       align="end" 
                       className="w-48 bg-sidebar-accent border-sidebar-border rounded-xl"
                     >
-                      <DropdownMenuItem className="text-white hover:bg-sidebar-primary/20 hover:text-sidebar-primary rounded-lg">
+                      <DropdownMenuItem 
+                        className="text-white hover:bg-sidebar-primary/20 hover:text-sidebar-primary rounded-lg"
+                        onClick={() => handleReScrapeStore(session.url)}
+                        disabled={startScrapingMutation.isPending}
+                      >
                         <Zap className="h-4 w-4 mr-2" />
                         Re-scrape Store
                       </DropdownMenuItem>
-                      <DropdownMenuItem className="text-white hover:bg-sidebar-primary/20 hover:text-sidebar-primary rounded-lg">
-                        <Store className="h-4 w-4 mr-2" />
-                        Edit Store Info
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className="text-red-400 hover:bg-red-500/20 hover:text-red-300 rounded-lg">
+                      <DropdownMenuItem 
+                        className="text-red-400 hover:bg-red-500/20 hover:text-red-300 rounded-lg"
+                        onClick={() => handleDeleteSession(session.id, session.name)}
+                        disabled={deleteSessionMutation.isPending}
+                      >
                         <XCircle className="h-4 w-4 mr-2" />
                         Delete Store
                       </DropdownMenuItem>
@@ -169,13 +213,28 @@ export const StoreSidebar = () => {
                   </Badge>
                   
                   <span className="text-xs text-sidebar-foreground">
-                    {store.lastScrape}
+                    {formatLastScrape(session.started_at)}
                   </span>
                 </div>
                 
+                {session.status === 'in_progress' && session.total_pages > 0 && (
+                  <div className="mb-3">
+                    <div className="flex justify-between text-xs text-sidebar-foreground mb-1">
+                      <span>Progress</span>
+                      <span>{Math.round((session.scraped_pages / session.total_pages) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-sidebar-accent/30 rounded-full h-1.5">
+                      <div 
+                        className="bg-sidebar-primary h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${(session.scraped_pages / session.total_pages) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
                 <div className="text-xs text-white bg-sidebar-accent/30 rounded-lg px-3 py-2">
                   <span className="font-medium text-sidebar-primary">
-                    {store.productCount.toLocaleString()}
+                    {session.product_count.toLocaleString()}
                   </span> products extracted
                 </div>
               </Card>

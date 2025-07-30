@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://groceryghost-api.qubzes.com/api";
+const API_BASE_URL = "https://groceryghost-api.qubzes.com/api";
 
 export interface ScrapeRequest {
   url: string;

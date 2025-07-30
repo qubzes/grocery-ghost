@@ -32,6 +32,7 @@ app.add_middleware(
         "https://groceryghost-api.qubzes.com",
         "http://groceryghost.qubzes.com",
         "https://groceryghost.qubzes.com",
+        "https://scrape-grocery-dash.lovable.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

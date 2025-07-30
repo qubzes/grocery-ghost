@@ -198,13 +198,12 @@ async def extract_page_data(html, url):
         return None
 
 
-async def scrape_single_page(url, session_id):
+async def scrape_single_page(url, session_id, error_log=None):
     """Scrape a single page and return product data if found"""
-    db = SessionLocal()
     request = create_request_session()
 
     try:
-        response = request.get(url)
+        response = request.get(url, timeout=30)
         response.raise_for_status()
         html = response.text
         soup = BeautifulSoup(html, "html.parser")
@@ -213,31 +212,48 @@ async def scrape_single_page(url, session_id):
 
         print(f"Analysis for {url}: {analysis}")
         if analysis and analysis.is_product and analysis.product:
-            product = Product(
-                session_id=session_id,
-                url=url,
-                name=analysis.product.name,
-                current_price=analysis.product.current_price,
-                original_price=analysis.product.original_price,
-                unit_size=analysis.product.unit_size,
-                image_url=analysis.product.image_url,
-                category=analysis.product.category,
-                dietary_tags=",".join(analysis.product.dietary_tags)
+            # Return product data instead of immediately saving to DB
+            product_data = {
+                "session_id": session_id,
+                "url": url,
+                "name": analysis.product.name,
+                "current_price": analysis.product.current_price,
+                "original_price": analysis.product.original_price,
+                "unit_size": analysis.product.unit_size,
+                "image_url": analysis.product.image_url,
+                "category": analysis.product.category,
+                "dietary_tags": ",".join(analysis.product.dietary_tags)
                 if analysis.product.dietary_tags
                 else None,
-            )
-            db.add(product)
-            db.commit()
+            }
+            return product_data
+            
+    except requests.exceptions.Timeout as e:
+        error_msg = f"Timeout scraping {url}: {str(e)}"
+        print(error_msg)
+        if error_log is not None:
+            error_log.append(error_msg)
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Request error scraping {url}: {str(e)}"
+        print(error_msg)
+        if error_log is not None:
+            error_log.append(error_msg)
     except Exception as e:
-        print(f"Error scraping {url}: {e}")
+        error_msg = f"Unexpected error scraping {url}: {str(e)}"
+        print(error_msg)
+        if error_log is not None:
+            error_log.append(error_msg)
     finally:
         request.close()
-        db.close()
+    
+    return None  # Failed
 
 
 def process_all_pages(urls, session_id):
-    """Process all URLs with unlimited concurrent workers"""
+    """Process all URLs with concurrent workers and batch insert for performance"""
     total_pages = len(urls)
+    error_log = []  # Collect errors during scraping
+    products_batch = []  # Batch products for bulk insert
 
     db = SessionLocal()
     scrape_session = (
@@ -248,39 +264,88 @@ def process_all_pages(urls, session_id):
         db.close()
         raise ValueError("Session not found")
 
-    def sync_scrape_single_page(url, session_id):
-        asyncio.run(scrape_single_page(url, session_id))
+    def sync_scrape_single_page(url, session_id, error_log):
+        return asyncio.run(scrape_single_page(url, session_id, error_log))
+
+    successful_pages = 0
+    failed_pages = 0
+    products_found = 0
 
     with ThreadPoolExecutor(
-        max_workers=50
-    ) as executor:  # Increased for better concurrency, but limited to prevent overload
+        max_workers=25  # Reduced for better stability and database performance
+    ) as executor:
         futures = {
-            executor.submit(sync_scrape_single_page, url, session_id): url
+            executor.submit(sync_scrape_single_page, url, session_id, error_log): url
             for url in urls
         }
 
-        for _ in as_completed(futures):
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                if result:  # If product data was returned
+                    products_batch.append(Product(**result))
+                    successful_pages += 1
+                    products_found += 1
+                else:
+                    failed_pages += 1
+            except Exception as e:
+                failed_pages += 1
+                error_msg = f"Future failed for URL: {str(e)}"
+                error_log.append(error_msg)
+                print(error_msg)
+
             scrape_session.scraped_pages += 1
 
+            # Batch insert products every 10 items for performance
+            if len(products_batch) >= 10:
+                try:
+                    db.add_all(products_batch)
+                    db.commit()
+                    products_batch = []  # Clear the batch
+                except Exception as e:
+                    error_msg = f"Database batch insert error: {str(e)}"
+                    error_log.append(error_msg)
+                    print(error_msg)
+                    products_batch = []  # Clear the batch on error
+
             # Check if we've found 100 products and stop
-            product_count = (
-                db.query(Product).filter(Product.session_id == session_id).count()
-            )
-            if product_count >= 100:
+            if products_found >= 100:
                 print("Reached 100 products limit. Stopping scraper.")
                 break
 
-            if scrape_session.scraped_pages % 50 == 0:  # Commit every 50 pages
+            if scrape_session.scraped_pages % 25 == 0:  # Progress updates
                 db.commit()
-                print(f"Progress: {scrape_session.scraped_pages}/{total_pages}")
+                print(f"Progress: {scrape_session.scraped_pages}/{total_pages} (Success: {successful_pages}, Failed: {failed_pages}, Products: {products_found})")
 
+    # Insert any remaining products in the batch
+    if products_batch:
+        try:
+            db.add_all(products_batch)
+            db.commit()
+        except Exception as e:
+            error_msg = f"Final batch insert error: {str(e)}"
+            error_log.append(error_msg)
+            print(error_msg)
+
+    # Save error summary to session if there were errors
+    if error_log:
+        error_summary = f"Scraping completed with {failed_pages} failures out of {scrape_session.scraped_pages} pages processed.\n\n"
+        error_summary += "Error details:\n" + "\n".join(error_log[-50:])  # Keep last 50 errors to avoid huge logs
+        
+        # Update session with error details
+        scrape_session.error = error_summary
+    
     db.commit()
     db.close()
+    
+    print(f"Scraping summary: {successful_pages} successful, {failed_pages} failed, {products_found} products found")
 
 
 def scrape_store(session_id: str, base_url: str, netloc: str):
     db = SessionLocal()
     scrape_session = None
+    error_details = []
+    
     try:
         scrape_session = (
             db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
@@ -293,31 +358,75 @@ def scrape_store(session_id: str, base_url: str, netloc: str):
         scrape_session.status = SessionStatus.IN_PROGRESS
         db.commit()
 
-        initial_sitemaps = find_initial_sitemaps(base_url, request)
-        if not initial_sitemaps:
-            raise ValueError("No sitemaps found.")
+        try:
+            initial_sitemaps = find_initial_sitemaps(base_url, request)
+            if not initial_sitemaps:
+                raise ValueError("No sitemaps found.")
+        except Exception as e:
+            error_msg = f"Error finding sitemaps: {str(e)}"
+            error_details.append(error_msg)
+            raise ValueError(error_msg)
 
-        all_urls = extract_urls_from_sitemaps(initial_sitemaps, netloc, request)
+        try:
+            all_urls = extract_urls_from_sitemaps(initial_sitemaps, netloc, request)
+        except Exception as e:
+            error_msg = f"Error extracting URLs from sitemaps: {str(e)}"
+            error_details.append(error_msg)
+            raise ValueError(error_msg)
 
         if not all_urls:
+            error_msg = "Couldn't find any relevant product URLs from sitemaps"
+            error_details.append(error_msg)
             scrape_session.status = SessionStatus.FAILED
-            scrape_session.error = "Couldn't find any URLs from sitemaps"
+            scrape_session.error = error_msg
             db.commit()
             return
 
         scrape_session.total_pages = len(all_urls)
         db.commit()
 
-        process_all_pages(list(all_urls), session_id)
+        print(f"Found {len(all_urls)} URLs to process")
 
+        try:
+            process_all_pages(list(all_urls), session_id)
+        except Exception as e:
+            error_msg = f"Error during page processing: {str(e)}"
+            error_details.append(error_msg)
+            raise
+
+        # Check final product count
+        final_product_count = (
+            db.query(Product).filter(Product.session_id == session_id).count()
+        )
+        
         scrape_session.completed_at = datetime.now(timezone.utc)
-        scrape_session.status = SessionStatus.COMPLETED
+        
+        if final_product_count > 0:
+            scrape_session.status = SessionStatus.COMPLETED
+            print(f"Scraping completed successfully with {final_product_count} products found")
+        else:
+            scrape_session.status = SessionStatus.FAILED
+            scrape_session.error = "No products were found during scraping. This may indicate that the website structure is not supported or the product pages could not be identified."
+            
         db.commit()
 
     except Exception as e:
+        error_msg = f"Fatal error during scraping: {str(e)}"
+        error_details.append(error_msg)
+        print(error_msg)
+        
         if scrape_session:
             scrape_session.status = SessionStatus.FAILED
-            scrape_session.error = str(e)
+            
+            # Combine all error details
+            if error_details:
+                scrape_session.error = "Scraping failed with the following errors:\n\n" + "\n".join(error_details)
+            else:
+                scrape_session.error = str(e)
+                
+            scrape_session.completed_at = datetime.now(timezone.utc)
             db.commit()
     finally:
+        if 'request' in locals():
+            request.close()
         db.close()

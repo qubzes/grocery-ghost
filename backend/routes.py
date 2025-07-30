@@ -1,7 +1,9 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import func, text
 import csv
 import io
+from concurrent.futures import ThreadPoolExecutor
 
 from database import get_db
 from models import Product, ScrapeSession
@@ -9,6 +11,9 @@ from schemas import ScrapeRequest
 from scraper import validate_url, scrape_store
 
 router = APIRouter()
+
+# Thread pool for database operations
+executor = ThreadPoolExecutor(max_workers=4)
 
 
 @router.post("/scrape")
@@ -33,66 +38,217 @@ async def scrape(
 
 @router.get("/sessions")
 async def get_sessions(db: Session = Depends(get_db)):
-    sessions = db.query(ScrapeSession).order_by(ScrapeSession.started_at.desc()).all()
+    """Ultra-optimized sessions endpoint with single query using raw SQL"""
+    try:
+        # Single optimized query using raw SQL for maximum performance
+        query = text("""
+            SELECT 
+                s.id,
+                s.name,
+                s.url,
+                s.status,
+                s.total_pages,
+                s.scraped_pages,
+                s.started_at,
+                s.completed_at,
+                s.error,
+                COALESCE(p.product_count, 0) as product_count
+            FROM sessions s
+            LEFT JOIN (
+                SELECT session_id, COUNT(*) as product_count
+                FROM products
+                GROUP BY session_id
+            ) p ON s.id = p.session_id
+            ORDER BY s.started_at DESC
+            LIMIT 50
+        """)
+        
+        result = db.execute(query)
+        rows = result.fetchall()
+        
+        sessions_with_counts = []
+        for row in rows:
+            sessions_with_counts.append({
+                "id": row.id,
+                "name": row.name,
+                "url": row.url,
+                "status": row.status,
+                "total_pages": row.total_pages,
+                "scraped_pages": row.scraped_pages,
+                "started_at": row.started_at,
+                "completed_at": row.completed_at,
+                "error": row.error,
+                "product_count": row.product_count,
+            })
 
-    # Get product count for each session
-    sessions_with_counts = []
-    for s in sessions:
-        product_count = db.query(Product).filter(Product.session_id == s.id).count()
-        sessions_with_counts.append({
-            "id": s.id,
-            "name": s.name,
-            "url": s.url,
-            "status": s.status.value,
-            "total_pages": s.total_pages,
-            "scraped_pages": s.scraped_pages,
-            "started_at": s.started_at,
-            "completed_at": s.completed_at,
-            "product_count": product_count,
-        })
-
-    return {"sessions": sessions_with_counts}
+        return {"sessions": sessions_with_counts}
+    
+    except Exception as e:
+        print(f"Sessions query error: {str(e)}")
+        # Fallback to simpler query if raw SQL fails
+        try:
+            sessions = db.query(ScrapeSession).order_by(ScrapeSession.started_at.desc()).limit(50).all()
+            sessions_with_counts = []
+            for s in sessions:
+                product_count = db.query(func.count(Product.id)).filter(Product.session_id == s.id).scalar()
+                sessions_with_counts.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "url": s.url,
+                    "status": s.status.value,
+                    "total_pages": s.total_pages,
+                    "scraped_pages": s.scraped_pages,
+                    "started_at": s.started_at,
+                    "completed_at": s.completed_at,
+                    "error": s.error,
+                    "product_count": product_count or 0,
+                })
+            return {"sessions": sessions_with_counts}
+        except Exception as fallback_e:
+            raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(fallback_e)}")
 
 
 @router.get("/session/{session_id}")
 async def get_session(session_id: str, db: Session = Depends(get_db)):
-    session = db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    """Ultra-optimized session detail endpoint with efficient raw SQL"""
+    try:
+        # Single optimized query to get session details with product count
+        session_query = text("""
+            SELECT 
+                s.id, s.name, s.url, s.status, s.total_pages, s.scraped_pages,
+                s.started_at, s.completed_at, s.error,
+                COALESCE(p.product_count, 0) as product_count
+            FROM sessions s
+            LEFT JOIN (
+                SELECT session_id, COUNT(*) as product_count
+                FROM products
+                GROUP BY session_id
+            ) p ON s.id = p.session_id
+            WHERE s.id = :session_id
+        """)
+        
+        session_result = db.execute(session_query, {"session_id": session_id})
+        session_row = session_result.fetchone()
+        
+        if not session_row:
+            raise HTTPException(status_code=404, detail="Session not found")
 
-    products = db.query(Product).filter(Product.session_id == session_id).all()
+        product_count = session_row.product_count
+        
+        # For performance: limit products to first 100 by default
+        # This prevents slow responses for large datasets
+        products_query = text("""
+            SELECT id, name, current_price, original_price, unit_size, 
+                   category, url, image_url, dietary_tags
+            FROM products 
+            WHERE session_id = :session_id 
+            ORDER BY name
+            LIMIT 100
+        """)
+        
+        products_result = db.execute(products_query, {"session_id": session_id})
+        products_rows = products_result.fetchall()
 
-    response = {
-        "session_id": session.id,
-        "name": session.name,
-        "url": session.url,
-        "status": session.status.value,
-        "total_pages": session.total_pages,
-        "scraped_pages": session.scraped_pages,
-        "progress": round((session.scraped_pages / session.total_pages * 100), 2)
-        if session.total_pages > 0
-        else 0,
-        "started_at": session.started_at,
-        "completed_at": session.completed_at,
-        "error": session.error,
-        "total_products": len(products),
-        "products": [
-            {
-                "id": p.id,
-                "name": p.name,
-                "current_price": p.current_price,
-                "original_price": p.original_price,
-                "unit_size": p.unit_size,
-                "category": p.category,
-                "url": p.url,
-                "image_url": p.image_url,
-                "dietary_tags": p.dietary_tags.split(",") if p.dietary_tags else [],
+        response = {
+            "session_id": session_row.id,
+            "name": session_row.name,
+            "url": session_row.url,
+            "status": session_row.status,
+            "total_pages": session_row.total_pages,
+            "scraped_pages": session_row.scraped_pages,
+            "progress": round((session_row.scraped_pages / session_row.total_pages * 100), 2)
+            if session_row.total_pages > 0
+            else 0,
+            "started_at": session_row.started_at,
+            "completed_at": session_row.completed_at,
+            "error": session_row.error,
+            "total_products": product_count,
+            "products_shown": len(products_rows),
+            "products": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "current_price": p.current_price,
+                    "original_price": p.original_price,
+                    "unit_size": p.unit_size,
+                    "category": p.category,
+                    "url": p.url,
+                    "image_url": p.image_url,
+                    "dietary_tags": p.dietary_tags.split(",") if p.dietary_tags else [],
+                }
+                for p in products_rows
+            ],
+        }
+        
+        # Add pagination info if there are more products
+        if product_count > 100:
+            response["pagination"] = {
+                "total_products": product_count,
+                "products_shown": len(products_rows),
+                "has_more": True,
+                "message": f"Showing first {len(products_rows)} of {product_count} products for performance. Use the paginated endpoint for more."
             }
-            for p in products
-        ],
-    }
 
-    return response
+        return response
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        print(f"Session detail error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving session: {str(e)}")
+
+
+@router.get("/session/{session_id}/products")
+async def get_session_products_paginated(
+    session_id: str, 
+    offset: int = 0, 
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """Paginated products endpoint for large datasets"""
+    try:
+        # Verify session exists
+        session = db.query(ScrapeSession).filter(ScrapeSession.id == session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Get total count
+        total_count = db.query(func.count(Product.id)).filter(Product.session_id == session_id).scalar() or 0
+        
+        # Get paginated products
+        products = (
+            db.query(Product)
+            .filter(Product.session_id == session_id)
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        
+        return {
+            "products": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "current_price": p.current_price,
+                    "original_price": p.original_price,
+                    "unit_size": p.unit_size,
+                    "category": p.category,
+                    "url": p.url,
+                    "image_url": p.image_url,
+                    "dietary_tags": p.dietary_tags.split(",") if p.dietary_tags else [],
+                }
+                for p in products
+            ],
+            "pagination": {
+                "total": total_count,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < total_count
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving products: {str(e)}")
 
 
 @router.delete("/session/{session_id}")

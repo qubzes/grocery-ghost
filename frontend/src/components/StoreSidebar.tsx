@@ -13,7 +13,9 @@ import {
   MoreVertical,
   Zap,
   Ghost,
-  Loader2
+  Loader2,
+  AlertTriangle,
+  Eye
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -21,9 +23,53 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useSessions, useDeleteSession, useStartScraping } from "@/hooks/useApi";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
+
+const ErrorDetailsDialog = ({ session }: { session: any }) => {
+  if (!session.error) return null;
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg"
+          title="View error details"
+        >
+          <AlertTriangle className="h-3 w-3" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="text-red-400 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            Error Details for {session.name}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="mt-4">
+          <div className="bg-red-950/50 border border-red-500/20 rounded-lg p-4 max-h-96 overflow-y-auto">
+            <pre className="text-sm text-red-200 whitespace-pre-wrap font-mono">
+              {session.error}
+            </pre>
+          </div>
+          <div className="mt-4 text-sm text-muted-foreground">
+            <p>This error occurred during the scraping process. You can try re-scraping the store to resolve temporary issues.</p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const getStatusConfig = (status: string) => {
   switch (status) {
@@ -212,9 +258,14 @@ export const StoreSidebar = () => {
                     {statusConfig.text}
                   </Badge>
                   
-                  <span className="text-xs text-sidebar-foreground">
-                    {formatLastScrape(session.started_at)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {session.error && session.status === 'failed' && (
+                      <ErrorDetailsDialog session={session} />
+                    )}
+                    <span className="text-xs text-sidebar-foreground">
+                      {formatLastScrape(session.started_at)}
+                    </span>
+                  </div>
                 </div>
                 
                 {session.status === 'in_progress' && session.total_pages > 0 && (

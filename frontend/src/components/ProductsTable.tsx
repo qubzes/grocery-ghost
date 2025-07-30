@@ -125,6 +125,9 @@ export const ProductsTable = () => {
                     {currentSessionData?.status === 'in_progress' && (
                       <> • Scraping in progress ({Math.round(currentSessionData.progress)}% complete)</>
                     )}
+                    {currentSessionData?.status === 'failed' && currentSessionData.error && (
+                      <> • <span className="text-red-400">Scraping failed (click to view details)</span></>
+                    )}
                   </>
                 )}
               </p>

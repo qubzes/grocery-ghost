@@ -30,6 +30,7 @@ export interface Session {
   scraped_pages: number;
   started_at: string;
   completed_at: string | null;
+  error: string | null;
   product_count: number;
 }
 

@@ -1,4 +1,4 @@
-const API_BASE_URL = "http://49.13.205.117/:5000/api";
+const API_BASE_URL = "http://groceryghost-api.qubzes.com/api";
 
 export interface ScrapeRequest {
   url: string;

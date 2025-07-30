@@ -210,25 +210,8 @@ async def scrape_single_page(url, session_id):
         soup = BeautifulSoup(html, "html.parser")
         clean_html = soup.get_text(separator="\n", strip=True)
         analysis = await extract_page_data(clean_html, url)
-        print(
-            f"Analyzing {url} - is_product: {analysis.is_product if analysis else 'N/A'}"
-        )
 
-        if analysis and analysis.is_product and not analysis.product:
-            print(f"Retrying extraction for confirmed product page: {url}")
-            focused_prompt = f"This is definitely a product page. Extract ALL product details from: {clean_html[:3000]}"
-            try:
-                retry_result = await gemini_agent.run(
-                    focused_prompt, output_type=PageAnalysis
-                )
-                if retry_result.output and retry_result.output.product:
-                    analysis = retry_result.output
-            except Exception as e:
-                print(f"Retry failed: {e}")
-
-        print(
-            f"Product found: {analysis.product.name if analysis and analysis.product else 'No product'}"
-        )
+        print(f"Analysis for {url}: {analysis}")
         if analysis and analysis.is_product and analysis.product:
             product = Product(
                 session_id=session_id,

@@ -1,0 +1,4 @@
+Sitemaps found for https://www.costco.com:
+Total count: 1
+
+1. https://www.costco.com/sitemap_lw_index.xml

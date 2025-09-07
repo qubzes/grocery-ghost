@@ -43,7 +43,7 @@ async def validate_url(url):
     """Validate URL and extract company name using AI"""
     session = create_request_session()
     try:
-        response = session.get(url, timeout=10)
+        response = session.get(url, timeout=60)
         response.raise_for_status()
 
         final_url = response.headers.get("x-unblocker-redirected-to", response.url)
@@ -86,7 +86,7 @@ def find_initial_sitemaps(base_url, session):
     initial_sitemaps = []
     robots_url = urljoin(base_url, "/robots.txt")
     try:
-        response = session.get(robots_url)
+        response = session.get(robots_url, timeout=60)
         response.raise_for_status()
         sitemap_lines = re.findall(
             r"^Sitemap:\s*(.+)$", response.text, re.MULTILINE | re.IGNORECASE
@@ -109,7 +109,7 @@ def find_initial_sitemaps(base_url, session):
         for path in candidates:
             cand = urljoin(base_url, path)
             try:
-                response = session.get(cand)
+                response = session.get(cand, timeout=60)
                 if response.status_code == 200 and (
                     "xml" in response.headers.get("Content-Type", "").lower()
                     or response.content.startswith(b"<?xml")
@@ -124,7 +124,7 @@ def find_initial_sitemaps(base_url, session):
 
 def fetch_content(url, session):
     try:
-        response = session.get(url)
+        response = session.get(url, timeout=60)
         response.raise_for_status()
         content = response.content
         if content.startswith(b"\x1f\x8b"):
